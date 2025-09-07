@@ -393,7 +393,7 @@ int interpreter_run(void) {
                 case V810_OP_LD_H: {
                     WORD reg1_val = 0;
                     if (reg1) reg1_val = v810_state->P_REG[reg1];
-                    v810_state->P_REG[reg2] = (SHWORD)mem_rhword(reg1_val + (SHWORD)instr2);
+                    v810_state->P_REG[reg2] = (SHWORD)mem_rhword((reg1_val + (SHWORD)instr2));
                     if ((last_opcode & 0x34) == 0x30 && (last_opcode & 3) != 2) {
                     // load immediately following another load takes 2 cycles instead of 3
                         cycles -= 1;
@@ -407,7 +407,7 @@ int interpreter_run(void) {
                 case V810_OP_LD_W: {
                     WORD reg1_val = 0;
                     if (reg1) reg1_val = v810_state->P_REG[reg1];
-                    v810_state->P_REG[reg2] = mem_rword(reg1_val + (SHWORD)instr2);
+                    v810_state->P_REG[reg2] = mem_rword((reg1_val + (SHWORD)instr2));
                     if ((last_opcode & 0x34) == 0x30 && (last_opcode & 3) != 2) {
                     // load immediately following another load takes 4 cycles instead of 5
                         cycles -= 1;
@@ -435,7 +435,7 @@ int interpreter_run(void) {
                 case V810_OP_IN_H: {
                     WORD reg1_val = 0;
                     if (reg1) reg1_val = v810_state->P_REG[reg1];
-                    v810_state->P_REG[reg2] = (HWORD)mem_rhword(reg1_val + (SHWORD)instr2);
+                    v810_state->P_REG[reg2] = (HWORD)mem_rhword((reg1_val + (SHWORD)instr2));
                     if ((last_opcode & 0x34) == 0x30 && (last_opcode & 3) != 2) {
                     // load immediately following another load takes 2 cycles instead of 3
                         cycles -= 1;
@@ -449,7 +449,7 @@ int interpreter_run(void) {
                 case V810_OP_IN_W: {
                     WORD reg1_val = 0;
                     if (reg1) reg1_val = v810_state->P_REG[reg1];
-                    v810_state->P_REG[reg2] = (WORD)mem_rword(reg1_val + (SHWORD)instr2);
+                    v810_state->P_REG[reg2] = (WORD)mem_rword((reg1_val + (SHWORD)instr2));
                     if ((last_opcode & 0x34) == 0x30 && (last_opcode & 3) != 2) {
                     // load immediately following another load takes 4 cycles instead of 5
                         cycles -= 1;
@@ -477,7 +477,7 @@ int interpreter_run(void) {
                     if (reg1) reg1_val = v810_state->P_REG[reg1];
                     HWORD reg2_val = 0;
                     if (reg2) reg2_val = v810_state->P_REG[reg2];
-                    mem_whword(reg1_val + (SHWORD)instr2, reg2_val);
+                    mem_whword((reg1_val + (SHWORD)instr2), reg2_val);
                     if ((last_opcode & 0x34) == 0x34 && (last_opcode & 3) != 2) {
                         // with two consecutive stores, the second takes 2 cycles instead of 1
                         cycles += 1;
@@ -489,7 +489,7 @@ int interpreter_run(void) {
                     if (reg1) reg1_val = v810_state->P_REG[reg1];
                     WORD reg2_val = 0;
                     if (reg2) reg2_val = v810_state->P_REG[reg2];
-                    mem_wword(reg1_val + (SHWORD)instr2, reg2_val);
+                    mem_wword((reg1_val + (SHWORD)instr2), reg2_val);
                     if ((last_opcode & 0x34) == 0x34 && (last_opcode & 3) != 2) {
                         // with two consecutive stores, the second takes 4 cycles instead of 1
                         cycles += 3;
