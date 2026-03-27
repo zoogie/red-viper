@@ -28,6 +28,7 @@
 #include "multiplayer.h"
 #include "rom_db.h"
 #include "patches.h"
+#include "video_hard.h"
 
 #define COLOR_R(COLOR) ( ((COLOR) & 0x000000FF) )
 #define COLOR_G(COLOR) ( ((COLOR) & 0x0000FF00) >> 8)
@@ -717,8 +718,9 @@ static void draw_logo(void) {
     
     for (int i = 0; i < 2; i++) {
         C2D_SceneBegin(screenTargetHard[i]);
-        C2D_ViewScale(1, -1);
-        C2D_ViewTranslate(0, -512);
+        C2D_ViewScale(-1, -1);
+        C2D_ViewRotateDegrees(90);
+        C2D_ViewTranslate(-512, 0);
         C2D_DrawSprite(&splash_left);
         C2D_DrawSprite(&splash_right);
     }

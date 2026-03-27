@@ -1,24 +1,27 @@
-.constf const1(0.00390625, 0.00390625, 0.000244140625, -1.0)
+; 1/256, -255/256, 1/512, -1
+.constf const1(0.00390625, -0.99609375, 0.000244140625, -1.0)
 
-; v0: (left,top,right,bottom) pos
-; v1: (u,v) texcoord origin
-; v2: (ix,iy,jx,jy) texcoord basis
+; position is transposed
+; v0: (x1, y1, u1, v1)
+; v1: (uoff1, voff1) - always zero
+; v2: (x2, y2, u2, v2)
+; v3: (uoff2, voff2)
 
 .out outpos dummy
-.out outtc0 dummy ; uv's twice
-.out outmat dummy
+.out outtc0 dummy
 
 .entry vmain_affine
 .proc vmain_affine
     ; position: 0..size -> -1..1
-    mov r0, const1.xyxy
-    mad r0.xyzw, r0.xyxy, v0.xyzw, const1.wwww
-    mov outpos, r0
-    ; texcoord origin: 0..size -> 0..1
-    mul r1.xyzw, const1.zzzz, v1.xyxy
-    mov outtc0, r1
-    ; texcoord basis: 0..size -> 0..1
-    mul r2.xyzw, const1.zzzz, v2.xyzw
-    mov outmat, r2
+    mov r0, const1.xxxx
+    mad r0.xy, r0.xy, v0.xy, const1.ww
+    mad r0.zw, r0.zwzw, v2.xyxy, const1.wywy
+    mov outpos.xyzw, r0.yxwz
+    ; texcoord: 0..size -> 0..1
+    mov r0.xy, v0.zw
+    mov r0.zw, v2.zwzw
+    add r0.zw, r0.zwzw, v3.xyxy
+    mul r0.xyzw, const1.zzzz, r0.xyzw
+    mov outtc0, r0
     end
 .end

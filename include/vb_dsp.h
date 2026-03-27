@@ -84,6 +84,7 @@ typedef struct {
 ////////////////////////////////////////////////////////////////////
 // Keybd Fn's. Had to put it somewhere!
 // Read the Controller
+void input_init(void);
 HWORD V810_RControll(bool reset);
 
 typedef struct {
@@ -132,7 +133,8 @@ int videoProcessingTime(void);
 
 void video_init(void);
 void video_render(int displayed_fb, bool on_time);
-void video_flush(bool left_for_both);
+void video_download_vip(int drawn_fb);
+void video_flush(bool default_for_both);
 void video_quit(void);
 
 void V810_SetPal(int BRTA, int BRTB, int BRTC);
@@ -160,22 +162,24 @@ extern int eye_count;
 extern bool tileVisible[2048];
 extern int blankTile;
 
+void setup_brightness_lut(void);
+int video_get_colour(int id, int brt_reg);
+
 #ifdef __3DS__
 
 // video_hard
 extern C3D_Tex screenTexHard[2];
-extern C3D_RenderTarget *screenTargetHard[2];
-void video_hard_init(void);
-void video_hard_render(int drawn_fb);
-void update_texture_cache_hard(void);
 
 // video_soft
 extern C3D_Tex screenTexSoft[2];
+extern uint32_t columnTableSoft[2][96][3];
 void video_soft_init(void);
 void video_soft_to_texture(int displayed_fb);
+void video_soft_to_fb(u32 *outbuf, int displayed_fb, int src_eye, bool use_column_table, bool additive);
 
 #endif
 
+void video_hard_render(int drawn_fb);
 void video_soft_render(int drawn_fb);
 void update_texture_cache_soft(void);
 

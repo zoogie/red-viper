@@ -8,16 +8,10 @@
 #include "v810_mem.h"
 #include "vb_dsp.h"
 #include "drc_core.h"
+#include "vb_sound.h"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_main.h>
-
-// dummy
-#include "vb_dsp.h"
-#include "vb_sound.h"
-VB_DSPCACHE tDSPCACHE;
-void sound_update(uint32_t cycles) {}
-void sound_write(int addr, uint16_t val) {}
 
 #if DRC_AVAILABLE
 #else
@@ -53,6 +47,9 @@ void sdl_flush(bool displayed_fb, int player) {
     SDL_BlitScaled(game_surface, NULL, window_surface, &rect);
 }
 
+void video_init();
+void video_hard_render(int drawn_fb);
+
 int main(int argc, char* argv[]) {
     int err;
 
@@ -74,7 +71,8 @@ int main(int argc, char* argv[]) {
     drc_init();
     #endif
 
-    strncpy(tVBOpt.ROM_PATH, argv[1], sizeof(tVBOpt.ROM_PATH));
+    strncpy(tVBOpt.ROM_PATH, argv[1], sizeof(tVBOpt.ROM_PATH)-1);
+    tVBOpt.ROM_PATH[sizeof(tVBOpt.ROM_PATH)-1] = 0;
 
     // -m for multiplayer
     for (int i = 0; i < argc; i++) {
@@ -90,39 +88,69 @@ int main(int argc, char* argv[]) {
         if (ret == 100) break;
     }
 
-    tVBOpt.RENDERMODE = RM_CPUONLY;
-
     clearCache();
 
-    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-    window = SDL_CreateWindow("Red Viper", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 384*2, 224*2*(1+is_multiplayer), 0);
-    window_surface = SDL_GetWindowSurface(window);
-    game_surface = SDL_CreateRGBSurfaceWithFormat(0, 384, 224, 32, SDL_PIXELFORMAT_XBGR8888);
+    SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    window = SDL_CreateWindow("Red Viper", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 384*2, 224*2*(1+is_multiplayer), SDL_WINDOW_OPENGL);
+    // window_surface = SDL_GetWindowSurface(window);
+    // game_surface = SDL_CreateRGBSurfaceWithFormat(0, 384, 224, 32, SDL_PIXELFORMAT_XBGR8888);
+
+    SDL_GLContext gl_context = SDL_GL_CreateContext(window);
 
     int lasttime = SDL_GetTicks();
 
+    sound_init();
+
+    video_init();
+
+    // make sure the window shows up if the game doesn't immediately enable drawing
+    SDL_GL_SwapWindow(window);
+
     while (true) {
-        for (int i = 0; i < 2; i++) {
-            vb_state = &vb_players[i];
-            clearCache();
-            if(vb_state->tVIPREG.tFrame == 0 && !vb_state->tVIPREG.drawing) {
-                if (vb_state->tVIPREG.XPCTRL & XPEN) {
-                    if (tDSPCACHE.CharCacheInvalid) {
-                        update_texture_cache_soft();
+        int displayed_fb = vb_state->tVIPREG.tDisplayedFB;
+        // for (int i = 0; i < 2; i++) {
+        //     vb_state = &vb_players[i];
+        //     clearCache();
+        //     if(vb_state->tVIPREG.tFrame == 0 && !vb_state->tVIPREG.drawing) {
+        //         if (vb_state->tVIPREG.XPCTRL & XPEN) {
+        //             if (tDSPCACHE.CharCacheInvalid) {
+        //                 update_texture_cache_soft();
+        //             }
+
+        //             video_soft_render(!vb_state->tVIPREG.tDisplayedFB);
+
+        //             // we need to have these caches during rendering
+        //             tDSPCACHE.CharCacheInvalid = false;
+        //             memset(tDSPCACHE.BGCacheInvalid, 0, sizeof(tDSPCACHE.BGCacheInvalid));
+        //             memset(tDSPCACHE.CharacterCache, 0, sizeof(tDSPCACHE.CharacterCache));
+        //         }
+
+        //         sdl_flush(vb_state->tVIPREG.tDisplayedFB, i);
+        //     }
+        // }
+        // SDL_UpdateWindowSurface(window);
+        if(vb_state->tVIPREG.tFrame == 0 && !vb_state->tVIPREG.drawing && (vb_state->tVIPREG.DPCTRL & 0x0002)) {
+            video_render(displayed_fb, false);
+            SDL_GL_SwapWindow(window);
+        }
+
+        if (tVBOpt.RENDERMODE != RM_CPUONLY) {
+            if (vb_state->tVIPREG.XPCTRL & 0x0002) {
+                if (tDSPCACHE.DDSPDataState[!displayed_fb] != GPU_CLEAR) {
+                    memset((uint8_t*)vb_state->V810_DISPLAY_RAM.off + 0x8000 * !displayed_fb, 0, 0x6000);
+                    memset((uint8_t*)vb_state->V810_DISPLAY_RAM.off + 0x10000 + 0x8000 * !displayed_fb, 0, 0x6000);
+                    for (int i = 0; i < 64; i++) {
+                        tDSPCACHE.SoftBufWrote[!displayed_fb][i].min = 0xff;
+                        tDSPCACHE.SoftBufWrote[!displayed_fb][i].max = 0;
                     }
-
-                    video_soft_render(!vb_state->tVIPREG.tDisplayedFB);
-
-                    // we need to have these caches during rendering
-                    tDSPCACHE.CharCacheInvalid = false;
-                    memset(tDSPCACHE.BGCacheInvalid, 0, sizeof(tDSPCACHE.BGCacheInvalid));
-                    memset(tDSPCACHE.CharacterCache, 0, sizeof(tDSPCACHE.CharacterCache));
+                    memset(tDSPCACHE.OpaquePixels.u32[!displayed_fb], 0, sizeof(tDSPCACHE.OpaquePixels.u32[!displayed_fb]));
+                    tDSPCACHE.DDSPDataState[!displayed_fb] = GPU_CLEAR;
                 }
-
-                sdl_flush(vb_state->tVIPREG.tDisplayedFB, i);
             }
         }
-        SDL_UpdateWindowSurface(window);
 
         vb_state = &vb_players[0];
 
