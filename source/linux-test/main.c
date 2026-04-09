@@ -73,6 +73,11 @@ int main(int argc, char* argv[]) {
 
     strncpy(tVBOpt.ROM_PATH, argv[1], sizeof(tVBOpt.ROM_PATH)-1);
     tVBOpt.ROM_PATH[sizeof(tVBOpt.ROM_PATH)-1] = 0;
+    strncpy(tVBOpt.RAM_PATH, argv[1], sizeof(tVBOpt.RAM_PATH)-1);
+    tVBOpt.RAM_PATH[sizeof(tVBOpt.RAM_PATH)-1] = 0;
+    if (strrchr(tVBOpt.RAM_PATH, '.')) {
+        strcpy(strrchr(tVBOpt.RAM_PATH, '.'), ".ram");
+    }
 
     // -m for multiplayer
     for (int i = 0; i < argc; i++) {
@@ -133,7 +138,7 @@ int main(int argc, char* argv[]) {
         // }
         // SDL_UpdateWindowSurface(window);
         if(vb_state->tVIPREG.tFrame == 0 && !vb_state->tVIPREG.drawing && (vb_state->tVIPREG.DPCTRL & 0x0002)) {
-            video_render(displayed_fb, false);
+            video_render(displayed_fb, true);
             SDL_GL_SwapWindow(window);
         }
 

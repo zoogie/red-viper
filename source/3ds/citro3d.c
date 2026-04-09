@@ -21,7 +21,7 @@
 #include "map8x2_t3x.h"
 #include "map8x4_t3x.h"
 
-#define USE_SOFT_FLUSH false
+#define USE_SOFT_FLUSH true
 
 #define TOP_SCREEN_WIDTH  400
 #define TOP_SCREEN_HEIGHT 240
@@ -172,8 +172,6 @@ void gpu_init(void) {
 	Tex3DS_TextureFree(Tex3DS_TextureImport(palette_mask_tocpu_t3x, palette_mask_tocpu_t3x_size, &palette_mask_tocpu, NULL, false));
 
 	C3D_TexSetFilter(&tileTexture, GPU_NEAREST, GPU_NEAREST);
-
-	C3D_ColorLogicOp(GPU_LOGICOP_COPY);
 
 	C3D_DepthTest(false, GPU_ALWAYS, GPU_WRITE_ALL);
 
@@ -490,10 +488,9 @@ void video_download_vip(int drawn_fb) {
 	if (tVBOpt.RENDERMODE != RM_TOCPU) return;
 	if (downloaded) return;
 	downloaded = true;
-	while (ppfCount < 0) LightEvent_Wait(&transfer_event);
 	int eye = 0;
 	while (eye < 2) {
-		if (ppfCount < eye) LightEvent_Wait(&transfer_event);
+		while (ppfCount <= eye) LightEvent_Wait(&transfer_event);
 		uint32_t *in_fb = (uint32_t*)(rgba4_framebuffers + (384 * DOWNLOADED_FRAMEBUFFER_WIDTH) * eye);
 		uint32_t *out_fb = (uint32_t*)(vb_state->V810_DISPLAY_RAM.off + 0x10000 * eye + 0x8000 * drawn_fb);
 		GSPGPU_FlushDataCache(in_fb, 384*DOWNLOADED_FRAMEBUFFER_WIDTH*2);
@@ -519,9 +516,9 @@ void video_download_vip(int drawn_fb) {
 }
 
 void gpu_soft_to_texture(int displayed_fb) {
-	#if !USE_SOFT_FLUSH
-	video_soft_to_texture(displayed_fb);
-	#endif
+	if (!USE_SOFT_FLUSH || tVBOpt.RENDERMODE == RM_TOGPU) {
+		video_soft_to_texture(displayed_fb);
+	}
 }
 
 void gpu_clear_screen(int start_eye, int end_eye) {
@@ -827,6 +824,22 @@ void processColumnTable(void) {
 	}
 }
 
+void gpu_blend_antiflicker(void) {
+    C3D_BlendingColor(0x80808080);
+    C3D_AlphaBlend(GPU_BLEND_ADD, 0, GPU_CONSTANT_ALPHA, GPU_ONE_MINUS_CONSTANT_ALPHA, 0, 0);
+}
+
+void gpu_blend_default(void) {
+    C3D_ColorLogicOp(GPU_LOGICOP_COPY);
+}
+
+bool gpu_antiflicker_allowed(void) {
+	// soft flush is incompatible with antiflicker
+	return (!USE_SOFT_FLUSH || (tVBOpt.RENDERMODE != RM_CPUONLY && tVBOpt.RENDERMODE != RM_TOCPU))
+		// tocpu with double buffering off also seems incompatible for some reason
+		&& !(!tVBOpt.DOUBLE_BUFFER && tVBOpt.RENDERMODE == RM_TOCPU);
+}
+
 void gpu_flush(bool default_for_both, int displayed_fb, int vip_displayed_fb) {
 	if (!default_for_both) orig_eye = tVBOpt.DEFAULT_EYE;
 	if (eye_count == 2) default_for_both = false;
@@ -834,7 +847,6 @@ void gpu_flush(bool default_for_both, int displayed_fb, int vip_displayed_fb) {
 	if (tDSPCACHE.ColumnTableInvalid || (minRepeat != maxRepeat && tDSPCACHE.BrtPALMod))
 		processColumnTable();
 
-	// note: soft flush is also incompatible with antiflicker
 	if (!USE_SOFT_FLUSH || (tVBOpt.RENDERMODE != RM_CPUONLY && tVBOpt.RENDERMODE != RM_TOCPU))
 		video_flush_hard(default_for_both, displayed_fb, vip_displayed_fb);
 	else

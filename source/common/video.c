@@ -16,16 +16,11 @@ static int g_displayed_fb = 0;
 static int vip_displayed_fb = 0;
 
 void video_render(int displayed_fb, bool on_time) {
-	// if we're swapping fb's and we haven't downloaded, do so now
-	if (tVBOpt.RENDERMODE == RM_TOCPU && vb_state->tVIPREG.XPCTRL & XPEN) {
-		video_download_vip(tVBOpt.DOUBLE_BUFFER ? displayed_fb : 0);
-	}
-
     gpu_reset_vip_download();
 
-    #ifdef __3DS__
-	if (tVBOpt.ANTIFLICKER && on_time) video_flush(false);
-    #endif
+	bool antiflicker = gpu_antiflicker_allowed() && tVBOpt.ANTIFLICKER && on_time;
+
+	if (antiflicker) video_flush(false);
 
 	g_displayed_fb = displayed_fb;
 	vip_displayed_fb = tVBOpt.DOUBLE_BUFFER ? displayed_fb : 0;
@@ -36,14 +31,11 @@ void video_render(int displayed_fb, bool on_time) {
 	}
 
 	if (tVBOpt.DOUBLE_BUFFER) {
-        #ifdef __3DS__
-		C3D_BlendingColor(0x80808080);
-		if (tVBOpt.ANTIFLICKER && on_time) C3D_AlphaBlend(GPU_BLEND_ADD, 0, GPU_CONSTANT_ALPHA, GPU_ONE_MINUS_CONSTANT_ALPHA, 0, 0);
-        #endif
-		video_flush(false);
-        #ifdef __3DS__
-		C3D_ColorLogicOp(GPU_LOGICOP_COPY);
-        #endif
+		if (antiflicker) gpu_blend_antiflicker();
+		if (antiflicker || (vb_state->tVIPREG.XPCTRL & XPEN) || tDSPCACHE.ColumnTableInvalid || tDSPCACHE.BrtPALMod) {
+			video_flush(false);
+		}
+		if (antiflicker) gpu_blend_default();
 	}
 
     #ifdef __3DS__
@@ -77,14 +69,11 @@ void video_render(int displayed_fb, bool on_time) {
 	}
 
     if (!tVBOpt.DOUBLE_BUFFER) {
-        #ifdef __3DS__
-		C3D_BlendingColor(0x80808080);
-		if (tVBOpt.ANTIFLICKER && on_time) C3D_AlphaBlend(GPU_BLEND_ADD, 0, GPU_CONSTANT_ALPHA, GPU_ONE_MINUS_CONSTANT_ALPHA, 0, 0);
-        #endif
-        video_flush(false);
-        #ifdef __3DS__
-		C3D_ColorLogicOp(GPU_LOGICOP_COPY);
-        #endif
+		if (antiflicker) gpu_blend_antiflicker();
+		if (antiflicker || (vb_state->tVIPREG.XPCTRL & XPEN) || tDSPCACHE.ColumnTableInvalid || tDSPCACHE.BrtPALMod) {
+			video_flush(false);
+		}
+		if (antiflicker) gpu_blend_default();
     }
 }
 
