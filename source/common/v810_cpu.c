@@ -245,6 +245,11 @@ int v810_load_step(void) {
     if (load_pos >= all_size) {
         // final setup
 
+        // fill the rest of the address space with copies of the rom
+        for (int i = V810_ROM1.size; i < MAX_ROM_SIZE; i += V810_ROM1.size) {
+            memcpy(V810_ROM1.pmemory + i, V810_ROM1.pmemory, V810_ROM1.size);
+        }
+
         // If we need to save, we'll find out later
         is_sram = false;
 
@@ -349,6 +354,11 @@ void v810_reset(void) {
     if (CHECK_GAMEID("PRCHMB")) {
         tVBOpt.RENDERMODE = RM_TOCPU;
     }
+
+    // Don't soft flush for Golf, as that's mostly partial updates.
+    // I'd like to soft flush for Test Chamber, as that's all full updates.
+    // Unfortunately, there's still some instability, especially in anaglyph mode.
+    // tVBOpt.SOFT_FLUSH = CHECK_GAMEID("PRCHMB");
 
     tVBOpt.VIP_OVER_SOFT = (
         CHECK_GAMEID("01VREE") // Red Alarm (U)

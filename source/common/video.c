@@ -20,10 +20,23 @@ void video_render(int displayed_fb, bool on_time) {
 
 	bool antiflicker = gpu_antiflicker_allowed() && tVBOpt.ANTIFLICKER && on_time;
 
-	if (antiflicker) video_flush(false);
+	static HWORD old_brt[3];
+	HWORD new_brt[3] = {vb_state->tVIPREG.BRTA, vb_state->tVIPREG.BRTB, vb_state->tVIPREG.BRTC};
+	if (antiflicker) {
+		vb_state->tVIPREG.BRTA = old_brt[0];
+		vb_state->tVIPREG.BRTB = old_brt[1];
+		vb_state->tVIPREG.BRTC = old_brt[2];
+		video_flush(false);
+		vb_state->tVIPREG.BRTA = new_brt[0];
+		vb_state->tVIPREG.BRTB = new_brt[1];
+		vb_state->tVIPREG.BRTC = new_brt[2];
+	}
+	memcpy(old_brt, new_brt, sizeof(new_brt));
 
 	g_displayed_fb = displayed_fb;
 	vip_displayed_fb = tVBOpt.DOUBLE_BUFFER ? displayed_fb : 0;
+
+	bool should_flush = antiflicker || (vb_state->tVIPREG.XPCTRL & XPEN) || tDSPCACHE.DDSPDataState[displayed_fb] == CPU_WROTE || tDSPCACHE.ColumnTableInvalid || tDSPCACHE.BrtPALMod;
 
 	if (tVBOpt.RENDERMODE == RM_TOGPU || ((tVBOpt.RENDERMODE == RM_TOCPU || tVBOpt.RENDERMODE == RM_CPUONLY))) {
 		// postproc (can be done early)
@@ -32,7 +45,7 @@ void video_render(int displayed_fb, bool on_time) {
 
 	if (tVBOpt.DOUBLE_BUFFER) {
 		if (antiflicker) gpu_blend_antiflicker();
-		if (antiflicker || (vb_state->tVIPREG.XPCTRL & XPEN) || tDSPCACHE.ColumnTableInvalid || tDSPCACHE.BrtPALMod) {
+		if (should_flush) {
 			video_flush(false);
 		}
 		if (antiflicker) gpu_blend_default();
@@ -70,7 +83,7 @@ void video_render(int displayed_fb, bool on_time) {
 
     if (!tVBOpt.DOUBLE_BUFFER) {
 		if (antiflicker) gpu_blend_antiflicker();
-		if (antiflicker || (vb_state->tVIPREG.XPCTRL & XPEN) || tDSPCACHE.ColumnTableInvalid || tDSPCACHE.BrtPALMod) {
+		if (should_flush) {
 			video_flush(false);
 		}
 		if (antiflicker) gpu_blend_default();

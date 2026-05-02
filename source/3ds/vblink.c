@@ -179,7 +179,7 @@ static void vblink_thread(void*) {
         }
         int path_len = strlen(vblink_path) + strlen(vblink_fname);
         if (path_len + 1 < sizeof(tVBOpt.ROM_PATH)) {
-            strncat(vblink_path, vblink_fname, sizeof(vblink_path) - strlen(vblink_path) - 1);
+            strlcat(vblink_path, vblink_fname, sizeof(vblink_path) - strlen(vblink_path));
             f = fopen(vblink_path, "wb");
         }
 
@@ -245,6 +245,10 @@ static void vblink_thread(void*) {
 
         V810_ROM1.size = size;
         V810_ROM1.highaddr = 0x7000000 + size - 1;
+        // fill the rest of the address space with copies of the rom
+        for (int i = V810_ROM1.size; i < MAX_ROM_SIZE; i += V810_ROM1.size) {
+            memcpy(V810_ROM1.pmemory + i, V810_ROM1.pmemory, V810_ROM1.size);
+        }
         is_sram = false;
         gen_table();
         tVBOpt.CRC32 = get_crc(size);

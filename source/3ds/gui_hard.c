@@ -94,6 +94,8 @@ void drawTouchControls(int inputs);
 bool old_2ds = false;
 bool any_2ds = false;
 
+extern C3D_RenderTarget *finalScreen[2];
+
 static C3D_RenderTarget *screen;
 
 static C2D_TextBuf static_textbuf;
@@ -754,7 +756,7 @@ static void first_menu(int initial_button) {
         if (access(tVBOpt.HOME_PATH, F_OK)) mkdir(tVBOpt.HOME_PATH, 0777);
         snprintf(tVBOpt.RAM_PATH, sizeof(tVBOpt.RAM_PATH), "%s/saves/", tVBOpt.HOME_PATH);
         if (access(tVBOpt.RAM_PATH, F_OK)) mkdir(tVBOpt.RAM_PATH, 0777);
-        strncat(tVBOpt.RAM_PATH, filename, sizeof(tVBOpt.RAM_PATH) - 1);
+        strlcat(tVBOpt.RAM_PATH, filename, sizeof(tVBOpt.RAM_PATH));
         char *extension = strrchr(tVBOpt.RAM_PATH, '.');
         if (!extension) goto no_forwarder;
         strcpy(extension, ".ram");
@@ -827,6 +829,7 @@ static void game_menu(int initial_button) {
                 // clear screen buffer
                 for (int i = 0; i < 2; i++) {
                     C2D_TargetClear(screenTargetHard[i], 0);
+                    C2D_TargetClear(finalScreen[i], 0);
                 }
                 C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
                 video_flush(true);
@@ -895,6 +898,7 @@ static void multiplayer_menu(int initial_button) {
                 // clear screen buffer
                 for (int i = 0; i < 2; i++) {
                     C2D_TargetClear(screenTargetHard[i], 0);
+                    C2D_TargetClear(finalScreen[i], 0);
                 }
                 C3D_FrameBegin(C3D_FRAME_SYNCDRAW);
                 video_flush(true);
@@ -972,6 +976,7 @@ static void multiplayer_wait_for_peer(void) {
                     // clear screen buffer
                     for (int i = 0; i < 2; i++) {
                         C2D_TargetClear(screenTargetHard[i], 0);
+                        C2D_TargetClear(finalScreen[i], 0);
                     }
                     video_flush(true);
                     guiop = AKILL | VBRESET;
@@ -1329,6 +1334,7 @@ static bool rom_loader(char *message) {
         // clear screen buffer
         for (int i = 0; i < 2; i++) {
             C2D_TargetClear(screenTargetHard[i], 0);
+            C2D_TargetClear(finalScreen[i], 0);
         }
         tDSPCACHE.DDSPDataState[0] = tDSPCACHE.DDSPDataState[1] = GPU_CLEAR;
         for (int i = 0; i < 2; i++) {
@@ -1771,6 +1777,10 @@ static void multiplayer_dlplay(void) {
             ship_packet(send_packet);
         }
         if (size_received && dlplay_progress == V810_ROM1.size) {
+            // fill the rest of the address space with copies of the rom
+            for (int i = V810_ROM1.size; i < MAX_ROM_SIZE; i += V810_ROM1.size) {
+                memcpy(V810_ROM1.pmemory + i, V810_ROM1.pmemory, V810_ROM1.size);
+            }
             tVBOpt.RAM_PATH[0] = 0;
             game_running = true;
             is_sram = false;
