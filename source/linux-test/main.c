@@ -1,3 +1,4 @@
+#include <SDL2/SDL_hints.h>
 #include <stdio.h>
 #include <unistd.h>
 #include "stdlib.h"
@@ -12,6 +13,11 @@
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_main.h>
+
+// in case we're using weirdly old sdl
+#ifndef SDL_HINT_APP_NAME
+#define SDL_HINT_APP_NAME SDL_HINT_AUDIO_DEVICE_APP_NAME
+#endif
 
 #if DRC_AVAILABLE
 #else
@@ -71,8 +77,10 @@ int main(int argc, char* argv[]) {
     drc_init();
     #endif
 
-    strlcpy(tVBOpt.ROM_PATH, argv[1], sizeof(tVBOpt.ROM_PATH));
-    strlcpy(tVBOpt.RAM_PATH, argv[1], sizeof(tVBOpt.RAM_PATH));
+    strncpy(tVBOpt.ROM_PATH, argv[1], sizeof(tVBOpt.ROM_PATH)-1);
+    tVBOpt.ROM_PATH[sizeof(tVBOpt.ROM_PATH)-1] = 0;
+    strncpy(tVBOpt.RAM_PATH, argv[1], sizeof(tVBOpt.RAM_PATH)-1);
+    tVBOpt.RAM_PATH[sizeof(tVBOpt.RAM_PATH)-1] = 0;
     if (strrchr(tVBOpt.RAM_PATH, '.')) {
         strcpy(strrchr(tVBOpt.RAM_PATH, '.'), ".ram");
     }
@@ -152,7 +160,7 @@ int main(int argc, char* argv[]) {
             printf("Error code %d\n", err);
             return 1;
         }
-        
+
         if (!tVBOpt.FASTFORWARD) {
             int remaining = 20 - (SDL_GetTicks() - lasttime);
             if (remaining > 0) {
