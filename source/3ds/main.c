@@ -51,6 +51,9 @@ int main(void) {
     Handle nothingEvent = 0;
     svcCreateEvent(&nothingEvent, 0);
 
+    // suppress warning for framecount if unused, might want it at some point
+    (void)frame;
+
     gfxInit(GSP_RGBA8_OES, GSP_BGR8_OES, false);
     fsInit();
     archiveMountSdmc();
@@ -65,7 +68,7 @@ int main(void) {
     setDefaults();
     if (loadFileOptions() < 0)
         saveFileOptions();
-    
+
     vblink_init();
 
     drc_init();
