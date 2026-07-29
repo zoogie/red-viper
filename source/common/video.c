@@ -33,6 +33,17 @@ void video_render(int displayed_fb, bool on_time) {
 	}
 	memcpy(old_brt, new_brt, sizeof(new_brt));
 
+	// Red Alarm mostly benefits from the VIP being drawn over the software buffer.
+	// The exception is the controls menu, which needs the lines on top.
+	// The controls menu is the only place in the game where world 12 is used,
+	// so if world 12 is enabled, turn off VIP_OVER_SOFT.
+	if (
+        CHECK_GAMEID("01VREE") // Red Alarm (U)
+        || CHECK_GAMEID("E4VREJ") // Red Alarm (J)
+    ) {
+        tVBOpt.VIP_OVER_SOFT = ((WORLD *)(vb_state->V810_DISPLAY_RAM.off + 0x3d800))[12].head == 0;
+    }
+
 	g_displayed_fb = displayed_fb;
 	vip_displayed_fb = tVBOpt.DOUBLE_BUFFER ? displayed_fb : 0;
 
