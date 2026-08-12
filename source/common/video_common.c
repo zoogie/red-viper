@@ -202,6 +202,15 @@ int videoProcessingTime(void) {
 			} while (i = (i - 1) & 1023, i != start_index);
 		}
 	}
+	// The title screen animation in Zero Racers has two fullscreen affine layers,
+	// which in theory takes just 4141 cycles under 2 display frames.
+	// However, based on hardware recordings, it clearly takes 3 full frames.
+	// It's not currently clear what pushes it over the threshold.
+	// Therefore, we bump render time up a little so that it matches.
+	// If it takes just under 3 frames, screen tearing occurs.
+	if (CHECK_GAMEID("01VZRE") && time > 700000) {
+	    time += 5000;
+	}
 	return time;
 }
 

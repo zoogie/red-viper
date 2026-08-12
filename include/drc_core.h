@@ -51,9 +51,7 @@ enum {
 #define END_BLOCK 0xFF
 typedef struct {
     WORD *phys_offset;
-    WORD virt_loc;
     WORD size;
-    WORD cycles;
     // We can use ARM_NUM_CACHE_REGS registers at a time, r4-r10, and r11 will
     // have the address of v810_state
     // reg_map & 0x1F would have the VB register that is mapped to r4

@@ -518,6 +518,10 @@ static void drc_findLastConditionalInst(int pos) {
                     inst_cache[i].PC + inst_cache[i].branch_offset == 0x07005326 ||
                     inst_cache[i].PC + inst_cache[i].branch_offset == 0x07001f2c
                 )) break;
+                // zero racers calls a function to do its busywait read
+                if (CHECK_GAMEID("01VZRE") && inst_cache[i].PC + inst_cache[i].branch_offset == 0x07013754) {
+                    break;
+                }
             case V810_OP_ADD:
             case V810_OP_OR:
                 // only certain operators are ok for busywait here, otherwise fallthrough
@@ -541,6 +545,42 @@ static void drc_findLastConditionalInst(int pos) {
                 ) {
                     save_flags = false;
                     break;
+                }
+                // dragon hopper uses a shr in busywaits too sometimes
+                if (i == pos - 1 && i >= 1
+                    && inst_cache[i - 1].opcode == V810_OP_LD_B
+                    && inst_cache[i - 1].reg1 != inst_cache[i - 1].reg2
+                    && inst_cache[i].opcode == V810_OP_SHR_I
+                    && inst_cache[i].reg2 == inst_cache[i - 1].reg2
+                    && inst_cache[pos].PC + inst_cache[pos].branch_offset == inst_cache[i - 1].PC
+                ) {
+                    save_flags = false;
+                    break;
+                }
+            case V810_OP_SAR_I:
+                // zero racers uses complex shifting in multiple busywaits
+                if (CHECK_GAMEID("01VZRE")
+                    && i >= 5
+                    && (i == pos - 2 || i == pos - 3)
+                    && inst_cache[i - 5].opcode == V810_OP_LD_H
+                    && inst_cache[i - 4].opcode == V810_OP_ANDI
+                    && inst_cache[i - 4].imm == 0xc
+                    && inst_cache[i - 4].reg1 == inst_cache[i - 5].reg2
+                    && inst_cache[i - 3].opcode == V810_OP_SAR_I
+                    && inst_cache[i - 3].imm == 2
+                    && inst_cache[i - 3].reg2 == inst_cache[i - 4].reg2
+                    && inst_cache[i - 2].opcode == V810_OP_MOV
+                    && inst_cache[i - 2].reg1 == inst_cache[i - 3].reg2
+                    && inst_cache[i - 1].opcode == V810_OP_SHL_I
+                    && inst_cache[i - 1].imm == 0x10
+                    && inst_cache[i - 1].reg2 == inst_cache[i - 2].reg2
+                    && inst_cache[i - 0].opcode == V810_OP_SAR_I
+                    && inst_cache[i - 0].imm == 0x10
+                    && inst_cache[i - 0].reg2 == inst_cache[i - 1].reg2
+                    && inst_cache[pos].PC + inst_cache[pos].branch_offset == inst_cache[i - 5].PC
+                ) {
+                    dprintf(0, "busywait at %lx to %lx\n", inst_cache[pos].PC, inst_cache[pos].PC + inst_cache[pos].branch_offset);
+                    inst_cache[pos].busywait = true;
                 }
             default:
                 return;
@@ -716,7 +756,6 @@ static unsigned int drc_decodeInstructions(exec_block *block, WORD start_PC, WOR
         }
 
         cur_PC += am_size_table[optable[inst_cache[i].opcode].addr_mode];
-        block->cycles += opcycle[inst_cache[i].opcode];
 
         while (!drc_isCode(cur_PC) && cur_PC < end_PC) {
             cur_PC += 2;

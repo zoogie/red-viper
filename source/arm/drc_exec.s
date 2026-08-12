@@ -24,12 +24,8 @@ state_cycles_until_event_full:
 .struct 0
 block_phys_offset:
 .struct block_phys_offset + 4
-block_virt_loc:
-.struct block_virt_loc + 4
 block_size:
 .struct block_size + 4
-block_cycles:
-.struct block_cycles + 4
 block_reg_map:
 .struct block_reg_map + 4
 
