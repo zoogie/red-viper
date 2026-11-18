@@ -1,6 +1,6 @@
 VERSION_MAJOR := 1
 VERSION_MINOR := 3
-VERSION_MICRO := 2
+VERSION_MICRO := 4
 VERSION := v${VERSION_MAJOR}.${VERSION_MINOR}.${VERSION_MICRO}
 
 #---------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ include $(DEVKITARM)/3ds_rules
 #---------------------------------------------------------------------------------
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
-SOURCES		:=	source/common source/arm source/3ds source/common/inih source/3ds/yattlib-3d/src
+SOURCES		:=	source/common source/arm source/gpu source/3ds source/common/inih source/3ds/yattlib-3d/src
 DATA		:=	data
 INCLUDES	:=	include source/common/inih source/3ds/yattlib-3d/include
 GRAPHICS	:=	gfx gfx/maps

@@ -112,6 +112,7 @@ void v810_exit(void);
 int v810_load_init(void);
 int v810_load_step(void);
 void v810_load_cancel(void);
+void v810_load_finalize(int rom_size);
 
 // Reset the registers
 void v810_reset(void);
@@ -124,7 +125,7 @@ void v810_exp(WORD iNum, WORD eCode);
 
 void predictEvent(bool increment);
 
-int serviceInt(unsigned int cycles, WORD PC);
+bool serviceInt(unsigned int cycles, WORD PC);
 
 int v810_run(void);
 

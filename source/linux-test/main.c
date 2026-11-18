@@ -1,4 +1,5 @@
 #include <SDL2/SDL_hints.h>
+#include <SDL2/SDL_video.h>
 #include <stdio.h>
 #include <unistd.h>
 #include "stdlib.h"
@@ -10,7 +11,9 @@
 #include "vb_dsp.h"
 #include "drc_core.h"
 #include "vb_sound.h"
+#include "video_hard.h"
 
+#include <GLES2/gl2.h>
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_main.h>
 
@@ -19,14 +22,20 @@
 #define SDL_HINT_APP_NAME SDL_HINT_AUDIO_DEVICE_APP_NAME
 #endif
 
-#if DRC_AVAILABLE
-#else
-int drc_handleInterrupts(WORD cpsr, WORD* PC) { return 0; }
-void drc_relocTable(void) {}
-#endif
-
 SDL_Window *window;
 SDL_Surface *game_surface, *window_surface;
+
+GLuint gl_get_target_fbo() {
+    return 0;
+}
+
+int gl_get_output_scale() {
+    return 2;
+}
+
+void gl_flush() {
+    SDL_GL_SwapWindow(window);
+}
 
 void sdl_flush(bool displayed_fb, int player) {
     SDL_LockSurface(game_surface);
@@ -52,9 +61,6 @@ void sdl_flush(bool displayed_fb, int player) {
     SDL_Rect rect = {.x = 0, .y = 224*2 * player, .w = 384*2, .h = 224*2};
     SDL_BlitScaled(game_surface, NULL, window_surface, &rect);
 }
-
-void video_init();
-void video_hard_render(int drawn_fb);
 
 int main(int argc, char* argv[]) {
     int err;
@@ -121,7 +127,7 @@ int main(int argc, char* argv[]) {
 
     sound_init();
 
-    video_init();
+    video_init(true);
 
     // make sure the window shows up if the game doesn't immediately enable drawing
     SDL_GL_SwapWindow(window);

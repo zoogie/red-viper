@@ -1,15 +1,53 @@
 #ifndef DRC_CORE_H
 #define DRC_CORE_H
 
+#include <stdalign.h>
+#include <assert.h>
 #include "vb_types.h"
-#include "arm_emit.h"
 #include "v810_mem.h"
 
-#if __ARM_ARCH >= 6 && __arm__
 #define DRC_AVAILABLE true
+#define ARM_DRC (__ARM_ARCH >= 6 && __arm__)
+#ifdef __has_c_attribute
+#define DRC_TAILCALL __has_c_attribute(clang::musttail)
 #else
-#define DRC_AVAILABLE false
+#define DRC_TAILCALL false
 #endif
+
+typedef struct interpret_inst_t interpret_inst;
+typedef union {
+    ssize_t full;
+    struct {
+        BYTE reg1, reg2;
+        SHWORD imm;
+    };
+    WORD target_PC;
+    interpret_inst *target_instr;
+} interpret_arg;
+
+#if DRC_TAILCALL
+typedef void (*interpret_func)(cpu_state*, interpret_inst*, interpret_arg);
+#else
+typedef interpret_inst *(*interpret_func)(cpu_state*, interpret_inst*, interpret_arg);
+#endif
+
+struct interpret_inst_t {
+    interpret_func func;
+    interpret_arg arg;
+};
+
+#if ARM_DRC
+#include "arm_types.h"
+typedef WORD translated_inst;
+typedef WORD drc_unit;
+#else
+typedef interpret_inst translated_inst;
+typedef size_t drc_unit;
+#endif
+
+extern translated_inst *inst_ptr;
+
+static_assert(alignof(drc_unit) >= alignof(translated_inst), "translated_inst should fit into drc_unit alignment");
 
 #define BLOCK_MAP_COUNT (MAX_ROM_SIZE / 2 / 2)
 #define CACHE_SIZE  0x200000
@@ -50,7 +88,7 @@ enum {
 
 #define END_BLOCK 0xFF
 typedef struct {
-    WORD *phys_offset;
+    drc_unit *phys_offset;
     WORD size;
     // We can use ARM_NUM_CACHE_REGS registers at a time, r4-r10, and r11 will
     // have the address of v810_state
@@ -74,20 +112,22 @@ typedef struct {
     bool is_branch_target;
 } v810_instruction;
 
-extern WORD* cache_start;
-extern WORD* cache_pos;
+extern drc_unit* cache_start;
+extern drc_unit* cache_pos;
+
+extern BYTE reg_usage[32];
 
 int __divsi3(int a, int b);
 int __modsi3(int a, int b);
 unsigned int __udivsi3(unsigned int a, unsigned int b);
 unsigned int __umodsi3(unsigned int a, unsigned int b);
 
-void drc_executeBlock(WORD* entrypoint, exec_block* block);
 int drc_handleInterrupts(WORD cpsr, WORD* PC);
 void drc_relocTable(void);
 void drc_clearCache(void);
 
-void drc_setEntry(WORD loc, WORD *entry, exec_block *block);
+drc_unit* drc_getEntry(WORD loc, exec_block **p_block);
+void drc_setEntry(WORD loc, drc_unit *entry, exec_block *block);
 exec_block* drc_getNextBlockStruct(void);
 
 void drc_init(void);

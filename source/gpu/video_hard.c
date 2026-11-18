@@ -5,7 +5,7 @@
 #include "v810_cpu.h"
 #include "v810_mem.h"
 #include "vb_set.h"
-#include "video_hard.h"
+#include "video_hard_internal.h"
 
 AffineCacheEntry tileMapCache[AFFINE_CACHE_SIZE];
 
@@ -16,6 +16,7 @@ uint16_t *rgba4_framebuffers;
 
 
 void video_hard_init(void) {
+    tVBOpt.GPU_AVAILABLE = true;
 	gpu_init();
 	gpu_blend_default();
 
@@ -25,6 +26,16 @@ void video_hard_init(void) {
 	rgba4_framebuffers = linearAlloc(384 * DOWNLOADED_FRAMEBUFFER_WIDTH * 2 * 2);
 
 	gpu_set_opaque(false);
+}
+
+void video_hard_quit() {
+    if (tVBOpt.GPU_AVAILABLE) {
+        tVBOpt.GPU_AVAILABLE = false;
+        gpu_quit();
+        linearFree(vbuf);
+        linearFree(avbuf);
+        linearFree(rgba4_framebuffers);
+    }
 }
 
 // returns vertex count
@@ -142,6 +153,7 @@ int render_affine_cache(int mapid, vertex *vbuf, vertex *vcur, int umin, int uma
 }
 
 void video_hard_render(int drawn_fb) {
+    gpu_set_scissor(false, 0, 0, 0, 0);
 	gpu_target_screen(drawn_fb);
 
 	int start_eye = eye_count == 2 ? 0 : tVBOpt.DEFAULT_EYE;
@@ -155,7 +167,7 @@ void video_hard_render(int drawn_fb) {
 		tileMapCache[i].lvmax = tileMapCache[i].vmax;
 	}
 
-	gpu_clear_screen(start_eye, end_eye);
+	gpu_setup_screen(start_eye, end_eye);
 
 	gpu_setup_drawing();
 
@@ -304,6 +316,11 @@ void video_hard_render(int drawn_fb) {
 				int full_w = 512 * scx;
 				int full_h = 512 * scy;
 
+				if (avcur + h >= avbuf + AVBUF_SIZE) {
+					dprintf(0, "AVBUF OVERRUN!\n");
+					continue;
+				}
+
 				// initial bounds calculation setup
 				int umin, vmin, umax, vmax;
 				if (worlds[wrld].bgm == 1) {
@@ -318,97 +335,64 @@ void video_hard_render(int drawn_fb) {
 				}
 
 				// set up vertex buffers
-				int vbuf_count = 0;
-				avertex *vbufs[2] = {NULL, NULL};
-				for (int eye = start_eye; eye < end_eye; eye++) {
-					if (!(worlds[wrld].on & (2 >> eye)))
-						continue;
-
-					vbufs[eye] = avcur;
-
-					int gx = base_gx;
-					int mx = base_mx;
-
-					if (eye == 0) {
-						gx -= gp;
-						mx -= mp;
-					} else {
-						gx += gp;
-						mx += mp;
-					}
-					if (worlds[wrld].bgm == 1) {
-						// hbias
-
-						if (avcur + h >= avbuf + AVBUF_SIZE) {
-							dprintf(0, "AVBUF OVERRUN!\n");
-							break;
-						}
-
+				if (worlds[wrld].bgm == 1) {
+					// hbias
+					for (int y = 0; y < h; y++) {
+						avcur->x1 = base_gx;
+						avcur->y1 = gy + y;
+						avcur->x2 = base_gx + w;
+						avcur->y2 = gy + y;
+						// we can do just one pass per bg for repeating multimap
+						// because hbias isn't downscaled
+						int uleft = base_mx - mp + ((s16)(params[y * 2] << 3) >> 3);
 						// Account for hardware flaw that uses OR rather than adding
 						// when computing the address of HOFSTR.
-						u8 eye_offset = eye && !(param_base & 1);
-						for (int y = 0; y < h; y++) {
-							s16 p = (s16)(params[y * 2 + eye_offset] << 3) >> 3;
-							avcur->x1 = gx;
-							avcur->y1 = gy + y + 256 * eye;
-							avcur->x2 = gx + w;
-							avcur->y2 = gy + y + 256 * eye;
-							// we can do just one pass per bg for repeating multimap
-							// because hbias isn't downscaled
-							int u = mx + p;
-							int v = my + y;
-							if (u < umin) umin = u;
-							if (u + w > umax) umax = u + w;
-							avcur->u1 = avcur->u2 = u * 8;
-							avcur->v1 = avcur->v2 = v * 8;
-							avcur->uoff1 = avcur->voff1 = avcur->voff2 = 0;
-							avcur->uoff2 = w * 8;
-							avcur++;
-						}
-					} else {
-						// affine
-						if (avcur + h >= avbuf + AVBUF_SIZE) {
-							dprintf(0, "AVBUF OVERRUN!\n");
-							break;
-						}
-						for (int y = 0; y < h; y++) {
-							s16 mx = params[y * 8 + 0];
-							s16 mp = params[y * 8 + 1];
-							s16 my = params[y * 8 + 2];
-							s32 dx = params[y * 8 + 3];
-							s32 dy = params[y * 8 + 4];
-							avcur->x1 = gx;
-							avcur->y1 = gy + y + 256 * eye;
-							avcur->x2 = gx + w;
-							avcur->y2 = gy + y + 256 * eye;
-							avcur->u1 = avcur->u2 = mx + ((eye == 0) != (mp >= 0) ? abs(mp) * dx >> 6 : 0);
-							avcur->v1 = avcur->v2 = my + ((eye == 0) != (mp >= 0) ? abs(mp) * dy >> 6 : 0);
-							avcur->uoff1 = avcur->voff1 = 0;
-							avcur->uoff2 = (dx * w >> 6);
-							avcur->voff2 = (dy * w >> 6);
-							if (umin > (avcur->u1 >> 3))
-								umin = (avcur->u1 >> 3);
-							if (umin > ((avcur->u2 + avcur->uoff2) >> 3))
-								umin = ((avcur->u2 + avcur->uoff2) >> 3);
-							if (umax < (avcur->u1 >> 3))
-								umax = (avcur->u1 >> 3);
-							if (umax < ((avcur->u2 + avcur->uoff2) >> 3))
-								umax = ((avcur->u2 + avcur->uoff2) >> 3);
-							if (vmin > (avcur->v1 >> 3))
-								vmin = (avcur->v1 >> 3);
-							if (vmin > ((avcur->v2 + avcur->voff2) >> 3))
-								vmin = ((avcur->v2 + avcur->voff2) >> 3);
-							if (vmax < (avcur->v1 >> 3))
-								vmax = (avcur->v1 >> 3);
-							if (vmax < ((avcur->v2 + avcur->voff2) >> 3))
-								vmax = ((avcur->v2 + avcur->voff2) >> 3);
-							avcur++;
-						}
+						int uright = base_mx + mp + ((s16)(params[y * 2 + !(param_base & 1)] << 3) >> 3);
+						if (uleft < umin) umin = uleft;
+						if (uright < umin) umin = uright;
+						if (uleft + w > umax) umax = uleft + w;
+						if (uright + w > umax) umax = uright + w;
+						// adjust to the language of affine worlds
+						avcur->mx1 = avcur->mx2 = (uleft < uright ? uright : uleft) << 3;
+						avcur->mp1 = avcur->mp2 = uright - uleft;
+						avcur->my1 = avcur->my2 = (my + y) << 3;
+						avcur->dx1 = avcur->dx2 = 1 << 9;
+						avcur->dy1 = avcur->dy2 = 0;
+						avcur->off1 = 0;
+						avcur->off2 = w;
+						avcur++;
+					}
+				} else {
+					// affine
+					for (int y = 0; y < h; y++) {
+						s16 mx = params[y * 8 + 0];
+						s16 mp = params[y * 8 + 1];
+						s16 my = params[y * 8 + 2];
+						s32 dx = params[y * 8 + 3];
+						s32 dy = params[y * 8 + 4];
+						avcur->x1 = base_gx;
+						avcur->y1 = gy + y;
+						avcur->x2 = base_gx + w;
+						avcur->y2 = gy + y + gpu_can_chunk();
+						avcur->mx1 = avcur->mx2 = mx;
+						avcur->my1 = avcur->my2 = my;
+						avcur->dx1 = avcur->dx2 = dx;
+						avcur->dy1 = avcur->dy2 = dy;
+						avcur->mp1 = avcur->mp2 = mp;
+						avcur->off1 = 0;
+						avcur->off2 = w;
+						#define MINMAX(c,val) \
+						    if (c##min > (val)) c##min = (val); \
+							if (c##max < (val)) c##max = (val);
+						MINMAX(u, (mx) >> 3);
+						MINMAX(u, (mx + ((w + abs(mp)) * dx >> 6)) >> 3);
+						MINMAX(v, (my) >> 3);
+						MINMAX(v, (my + ((w + abs(mp)) * dy >> 6)) >> 3);
+						#undef MINMAX
+						avcur++;
 					}
 				}
 				if (avcur - avbuf > AVBUF_SIZE) dprintf(0, "AVBUF OVERRUN - %i/%i\n", avcur - avbuf, AVBUF_SIZE);
-
-				if (vbufs[0] == NULL && vbufs[1] == NULL) continue;
 
 				bool visible[8] = {0};
 				for (int sub_bg = 0; sub_bg < map_count; sub_bg++) {
@@ -442,7 +426,7 @@ void video_hard_render(int drawn_fb) {
 				}
 
 				gpu_target_screen(drawn_fb);
-				gpu_draw_affine(&worlds[wrld], umin, vmin, umax, vmax, drawn_fb, vbufs, visible);
+				gpu_draw_affine(&worlds[wrld], umin, vmin, umax, vmax, drawn_fb, visible);
 			}
 			gpu_setup_tile_drawing();
 		} else {

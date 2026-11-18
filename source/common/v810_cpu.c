@@ -65,6 +65,7 @@ void v810_init(void) {
 
     // Initialize our rom tables.... (USA)
     V810_ROM1.lowaddr  = 0x07000000;
+    V810_ROM1.highaddr = 0x07FFFFFF;
     V810_ROM1.off = (size_t)V810_ROM1.pmemory - V810_ROM1.lowaddr;
     // Offset + Lowaddr = pmemory
 
@@ -173,7 +174,6 @@ int v810_load_init(void) {
     }
     ok:
     V810_ROM1.size = rom_size;
-    V810_ROM1.highaddr = 0x07000000 + rom_size - 1;
 
     load_sram = fopen(tVBOpt.RAM_PATH, "rb");
     if (load_sram) {
@@ -193,7 +193,7 @@ int v810_load_init(void) {
 
 int v810_load_step(void) {
     int chunk_size = 0x10000;
-    int rom_size = V810_ROM1.highaddr + 1 - V810_ROM1.lowaddr;
+    int rom_size = V810_ROM1.size;
     int ram_size = load_sram_size;
     int all_size = rom_size + ram_size;
     if (load_pos < rom_size) {
@@ -245,6 +245,8 @@ int v810_load_step(void) {
     if (load_pos >= all_size) {
         // final setup
 
+        v810_load_finalize(rom_size);
+
         // fill the rest of the address space with copies of the rom
         for (int i = V810_ROM1.size; i < MAX_ROM_SIZE; i += V810_ROM1.size) {
             memcpy(V810_ROM1.pmemory + i, V810_ROM1.pmemory, V810_ROM1.size);
@@ -284,6 +286,28 @@ void v810_load_cancel(void) {
     }
 }
 
+void v810_load_finalize(int rom_size) {
+    V810_ROM1.size = rom_size;
+
+    // fill the rest of the address space with copies of the rom
+    for (int i = V810_ROM1.size; i < MAX_ROM_SIZE; i += V810_ROM1.size) {
+        memcpy(V810_ROM1.pmemory + i, V810_ROM1.pmemory, V810_ROM1.size);
+    }
+
+    // If we need to save, we'll find out later
+    is_sram = false;
+
+    // CRC32 Calculations
+    gen_table();
+    tVBOpt.CRC32 = get_crc(V810_ROM1.size);
+    tVBOpt.GAME_ID = MAKE_GAMEID((char*)(V810_ROM1.off + (V810_ROM1.highaddr & 0xFFFFFDF9)));
+
+    // Apply game patches
+    apply_patches();
+
+    v810_reset();
+}
+
 void v810_exit(void) {
     free(V810_ROM1.pmemory);
     for (int i = 0; i < 2; i++) {
@@ -305,8 +329,10 @@ void v810_reset(void) {
 
         vb_state->tVIPREG.newframe = true;
 
+#if ARM_DRC
         vb_state->v810_state.irq_handler = &drc_handleInterrupts;
         vb_state->v810_state.reloc_table = &drc_relocTable;
+#endif
 
         vb_state->v810_state.P_REG[0]    =  0x00000000;
         vb_state->v810_state.PC          =  0xFFFFFFF0;
@@ -434,7 +460,7 @@ void predictEvent(bool increment) {
 static int serviceDisplayInt(unsigned int cycles, WORD PC);
 
 // Returns number of cycles until next timer interrupt.
-int serviceInt(unsigned int cycles, WORD PC) {
+bool serviceInt(unsigned int cycles, WORD PC) {
     bool pending_int = false;
 
     // hardware read timing

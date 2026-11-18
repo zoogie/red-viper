@@ -1,35 +1,50 @@
-#include <GLES2/gl2.h>
+#include <GLES3/gl3.h>
 
-#include <SDL2/SDL.h>
-
-#include "video_hard.h"
+#include <stddef.h>
+#include "video_hard_internal.h"
 #include "vb_dsp.h"
 #include "v810_mem.h"
 #include "vb_set.h"
 
 GLuint transparentPixelTexture;
 static GLuint tileTexture;
-static u16 *tileTextureBuffer;
+static u16 *tileTextureBuffer = NULL;
 GLuint screenTexHard[2];
 GLuint screenTargetHard[2];
 GLuint screenTexSoft[2];
-static u16 *screenTexSoftBuffer;
+static u16 *screenTexSoftBuffer = NULL;
 
 GLuint sChar, sFinal, sAffine;
 
+static bool instanced_available;
+
 static float palettes[8][3][3];
 
-extern SDL_Window *window;
-
-static GLuint build_shader(const char *vertex_source, const char *fragment_source) {
+static GLuint build_shader(const char *name, bool is_es, const char *vertex_source, const char *fragment_source) {
     GLint compiled, infoLen;
 
+    const char *header;
+    if (is_es) {
+        header =
+            "#version 100\n"
+            "#define FIXH(x) (!(x))\n";
+    } else {
+        header =
+            "#version 120\n"
+            "#define FIXH(x) (x)\n"
+            "#define lowp\n"
+            "#define mediump\n"
+            "#define highp\n";
+    }
+    const char *instanced_def = instanced_available ? "#define INSTANCED_AVAILABLE\n" : "";
+
     GLuint vshader = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vshader, 1, &vertex_source, NULL);
+    const char *vertex_sources[3] = {header, instanced_def, vertex_source};
+    glShaderSource(vshader, 3, vertex_sources, NULL);
     glCompileShader(vshader);
     glGetShaderiv(vshader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
-        puts("Vertex shader failed to compile!");
+        printf("Vertex shader %s failed to compile!\n", name);
         glGetShaderiv(vshader, GL_INFO_LOG_LENGTH, &infoLen);
         if (infoLen > 0) {
             char *infoLog = malloc(infoLen);
@@ -40,11 +55,12 @@ static GLuint build_shader(const char *vertex_source, const char *fragment_sourc
     }
 
     GLuint fshader = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fshader, 1, &fragment_source, NULL);
+    const char *fragment_sources[2] = {header, fragment_source};
+    glShaderSource(fshader, 2, fragment_sources, NULL);
     glCompileShader(fshader);
     glGetShaderiv(fshader, GL_COMPILE_STATUS, &compiled);
     if (!compiled) {
-        puts("Fragment shader failed to compile!");
+        printf("Fragment shader %s failed to compile!\n", name);
         glGetShaderiv(fshader, GL_INFO_LOG_LENGTH, &infoLen);
         if (infoLen > 0) {
             char *infoLog = malloc(infoLen);
@@ -61,7 +77,7 @@ static GLuint build_shader(const char *vertex_source, const char *fragment_sourc
     GLint linked;
     glGetProgramiv(program, GL_LINK_STATUS, &linked);
     if (!linked) {
-        puts("Shader program failed to link!");
+        printf("Shader program %s failed to link!\n", name);
         glGetProgramiv(program, GL_INFO_LOG_LENGTH, &infoLen);
         if (infoLen > 0) {
             char *infoLog = malloc(infoLen);
@@ -71,12 +87,28 @@ static GLuint build_shader(const char *vertex_source, const char *fragment_sourc
         }
     }
 
+    // we no longer need these
+    glDeleteShader(vshader);
+    glDeleteShader(fshader);
+
     return program;
 }
 
 void gpu_init(void) {
+    const char *version_string = (const char*)glGetString(GL_VERSION);
+    bool is_es = strstr(version_string, "OpenGL ES") != NULL;
+    instanced_available = is_es
+        // ES: "OpenGL ES x.y ..."
+        ? version_string[10] >= '3' || version_string[11] != '.'
+        // Non-ES: "x.y ..."
+        : version_string[0] > '3' || version_string[1] != '.' || (version_string[0] == '3' && version_string[2] >= '1');
+    instanced_available = false;
+
     sChar = build_shader(
-        "uniform vec2 uOffset;\n"
+        "sChar",
+        is_es,
+
+        "uniform vec2 uPosOffset;\n"
         "uniform mat3 uPalette[8];\n"
         "attribute vec2 aPosition;\n"
         "attribute vec4 aParams;\n"
@@ -85,7 +117,7 @@ void gpu_init(void) {
         "void main() {\n"
         "   vParams = aParams.xyw;\n"
         "   vPalette = uPalette[int(aParams.z)];\n"
-        "   vec2 realPos = aPosition * (1.0/256.0) - (1.0 - 4.0/256.0) + uOffset;\n"
+        "   vec2 realPos = aPosition * (1.0/256.0) - (1.0 - 4.0/256.0) + uPosOffset;\n"
         "   gl_Position = vec4(realPos.y, realPos.x, 0.0, 1.0);\n"
         "   gl_PointSize = 8.0;\n"
         "}\n",
@@ -95,21 +127,42 @@ void gpu_init(void) {
         "varying mediump mat3 vPalette;\n"
         "void main() {\n"\
         "   mediump vec2 tileCoord = gl_PointCoord.yx;\n"
-        "   if (vParams.z >= 2.0) tileCoord.x = 1.0 - tileCoord.x;\n"
+        "   if (FIXH(vParams.z >= 2.0)) tileCoord.x = 1.0 - tileCoord.x;\n"
         "   if (vParams.z == 1.0 || vParams.z == 3.0) tileCoord.y = 1.0 - tileCoord.y;\n"
-        "   mediump vec2 realCoord = (vParams.xy + vec2(1.0 - tileCoord.x, tileCoord.y)) / vec2(256.0 / 8.0, 512.0 / 8.0);\n"
+        "   mediump vec2 realCoord = (vParams.xy + vec2(tileCoord.x, tileCoord.y)) / vec2(256.0 / 8.0, 512.0 / 8.0);\n"
         "   lowp vec4 color = texture2D(sTex, realCoord);\n"
         "   gl_FragColor = vec4(vPalette * color.xyz, color.w);\n"
         "}\n"
     );
 
     sAffine = build_shader(
-        "attribute vec4 aParams;\n"
-        "attribute vec2 aOffset;\n"
+        "sAffine",
+        is_es,
+
+        "uniform bool uRight;\n"
+        "uniform vec2 uPosOffset;\n"
+        "attribute vec4 aOrigins;\n"
+        "attribute vec4 aOffsets;\n"
+        "#ifdef INSTANCED_AVAILABLE\n"
+        "attribute vec2 aEndPos;\n"
+        "attribute vec2 aOffsetValue;\n"
+        "#endif\n"
         "varying vec2 vTexCoord;\n"
         "void main() {\n"
-        "   gl_Position = vec4(aParams.yx / 256.0 - 1.0, 0.0, 1.0);\n"
-        "   vTexCoord = (aParams.zw + aOffset) / 4096.0;\n"
+        "   #ifdef INSTANCED_AVAILABLE\n"
+        "   vec2 posOffset = aOffsetValue * (aEndPos - aOrigins.xy);\n"
+        "   float texOffset = aOffsetValue.x * aOffsets.w;\n"
+        "   #else\n"
+        "   vec2 posOffset = vec2(0, 0);\n"
+        "   float texOffset = aOffsets.w;\n"
+        "   #endif\n"
+        "   if (uRight != (aOffsets.z < 0.0)) texOffset += abs(aOffsets.z);\n"
+        "   // Add half a pixel to ensure pixel coordinates line up.\n"
+        "   // To prevent hitting texel boundaries, we subtract half of the\n"
+        "   // smallest offset the VB can provide.\n"
+        "   posOffset += 0.5 - 1.0/512.0;\n"
+        "   gl_Position = vec4((aOrigins.yx + uPosOffset.yx + posOffset.yx) / 256.0 - 1.0, 0.0, 1.0);\n"
+        "   vTexCoord = (aOrigins.zw + (aOffsets.xy * texOffset) / 64.0) / 4096.0;\n"
         "}\n",
 
         "uniform sampler2D sTex;\n"
@@ -137,6 +190,9 @@ void gpu_init(void) {
     );
 
     sFinal = build_shader(
+        "sFinal",
+        is_es,
+
         "attribute vec4 aPosition;\n"
         "attribute vec2 aTexCoord;\n"
         "varying vec2 vTexCoord;\n"
@@ -164,13 +220,12 @@ void gpu_init(void) {
     u16 pixel = 0;
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, &pixel);
 
-
     glGenTextures(1, &tileTexture);
     glBindTexture(GL_TEXTURE_2D, tileTexture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 256, 512, 0, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, NULL);
-    tileTextureBuffer = malloc(256 * 512 * sizeof(tileTextureBuffer[0]));
+    if (tileTextureBuffer == NULL) tileTextureBuffer = malloc(256 * 512 * sizeof(tileTextureBuffer[0]));
 
     glGenTextures(2, screenTexHard);
     glGenFramebuffers(2, screenTargetHard);
@@ -190,7 +245,7 @@ void gpu_init(void) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 512, 512, 0, GL_RGBA, GL_UNSIGNED_SHORT_4_4_4_4, NULL);
     }
-    screenTexSoftBuffer = malloc(512 * 512 * sizeof(screenTexSoftBuffer[0]));
+    if (screenTexSoftBuffer == NULL) screenTexSoftBuffer = malloc(512 * 512 * sizeof(screenTexSoftBuffer[0]));
 
     glGenTextures(1, &tileMapCache[0].tex);
     glGenFramebuffers(1, &tileMapCache[0].target);
@@ -208,9 +263,36 @@ void gpu_init(void) {
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tileMapCache[0].tex, 0);
 
     glDepthMask(GL_FALSE);
+
+    glEnable(0x8642); // GL_PROGRAM_POINT_SIZE - required for OpenGL Core; not available in ES headers
 }
 
-void gpu_clear_screen(int start_eye, int end_eye) {
+void gpu_quit(void) {
+    glDeleteProgram(sChar);
+    glDeleteProgram(sAffine);
+    glDeleteProgram(sFinal);
+    glDeleteTextures(1, &transparentPixelTexture);
+    glDeleteTextures(1, &tileTexture);
+    glDeleteTextures(2, screenTexHard);
+    glDeleteFramebuffers(2, screenTargetHard);
+    glDeleteTextures(2, screenTexSoft);
+    glDeleteTextures(1, &tileMapCache[0].tex);
+    glDeleteFramebuffers(1, &tileMapCache[0].target);
+    free(tileTextureBuffer);
+    tileTextureBuffer = NULL;
+    free(screenTexSoftBuffer);
+    screenTexSoftBuffer = NULL;
+}
+
+void gpu_clear_screen(bool outside_rendering) {
+    glClearColor(0, 0, 0, 0);
+    for (int i = 0; i < 2; i++) {
+        gpu_target_screen(i);
+        glClear(GL_COLOR_BUFFER_BIT);
+    }
+}
+
+void gpu_setup_screen(int start_eye, int end_eye) {
     glClearColor(vb_state->tVIPREG.BKCOL == 1, vb_state->tVIPREG.BKCOL == 2, vb_state->tVIPREG.BKCOL == 3, vb_state->tVIPREG.BKCOL != 0);
     glClear(GL_COLOR_BUFFER_BIT);
 }
@@ -248,7 +330,7 @@ void gpu_setup_tile_drawing(void) {
 }
 
 void gpu_set_tile_offset(float xoffset, float yoffset) {
-    glUniform2f(glGetUniformLocation(sChar, "uOffset"), xoffset, yoffset);
+    glUniform2f(glGetUniformLocation(sChar, "uPosOffset"), xoffset, yoffset);
 }
 
 void gpu_target_screen(int drawn_fb) {
@@ -279,7 +361,11 @@ void gpu_draw_tiles(int first, int count) {
     glDrawArrays(GL_POINTS, first, count);
 }
 
-void gpu_draw_affine(WORLD *world, int umin, int vmin, int umax, int vmax, int drawn_fb, avertex *vbufs[], bool visible[]) {
+bool gpu_can_chunk() {
+    return instanced_available;
+}
+
+void gpu_draw_affine(WORLD *world, int umin, int vmin, int umax, int vmax, int drawn_fb, bool visible[]) {
 	uint8_t mapid = world->head & 0xf;
 	uint8_t scx_pow = ((world->head >> 10) & 3);
 	uint8_t scy_pow = ((world->head >> 8) & 3);
@@ -300,10 +386,32 @@ void gpu_draw_affine(WORLD *world, int umin, int vmin, int umax, int vmax, int d
 
     glUseProgram(sAffine);
 
-    glEnableVertexAttribArray(glGetAttribLocation(sAffine, "aParams"));
-    glVertexAttribPointer(glGetAttribLocation(sAffine, "aParams"), 4, GL_SHORT, GL_FALSE, sizeof(avertex) / 2, avbuf);
-    glEnableVertexAttribArray(glGetAttribLocation(sAffine, "aOffset"));
-    glVertexAttribPointer(glGetAttribLocation(sAffine, "aOffset"), 2, GL_SHORT, GL_FALSE, sizeof(avertex) / 2, (u8*)avbuf + 8);
+    avertex *current_avbuf = avcur - h;
+    int vertex_size = instanced_available ? sizeof(avertex) : sizeof(avertex) / 2;
+
+    glEnableVertexAttribArray(glGetAttribLocation(sAffine, "aOrigins"));
+    glVertexAttribPointer(glGetAttribLocation(sAffine, "aOrigins"), 4, GL_SHORT, GL_FALSE, vertex_size, current_avbuf);
+    glEnableVertexAttribArray(glGetAttribLocation(sAffine, "aOffsets"));
+    glVertexAttribPointer(glGetAttribLocation(sAffine, "aOffsets"), 4, GL_SHORT, GL_FALSE, vertex_size, (u8*)current_avbuf + (instanced_available ? offsetof(avertex, dx2) : offsetof(avertex, dx1)));
+    if (instanced_available) {
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aOrigins"), 1);
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aOffsets"), 1);
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aEndPos"), 1);
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aOffsetValue"), 0);
+
+        glEnableVertexAttribArray(glGetAttribLocation(sAffine, "aEndPos"));
+        glVertexAttribPointer(glGetAttribLocation(sAffine, "aEndPos"), 2, GL_SHORT, GL_FALSE, vertex_size, (u8*)current_avbuf + offsetof(avertex, x2));
+        u8 rectangle[] = {
+            0, 0,
+            1, 0,
+            0, 1,
+            0, 1,
+            1, 0,
+            1, 1,
+        };
+        glEnableVertexAttribArray(glGetAttribLocation(sAffine, "aOffsetValue"));
+        glVertexAttribPointer(glGetAttribLocation(sAffine, "aOffsetValue"), 2, GL_BYTE, GL_FALSE, 2, rectangle);
+    }
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, tileMapCache[0].tex);
@@ -319,13 +427,27 @@ void gpu_draw_affine(WORLD *world, int umin, int vmin, int umax, int vmax, int d
     glUniform1iv(glGetUniformLocation(sAffine, "uMapVisible"), map_count, uVisible);
 
     for (int eye = 0; eye < 2; eye++) {
-        if (vbufs[eye] != NULL) {
+        if (world->on & (2 >> eye)) {
             int gx = base_gx + (eye == 0 ? -gp : gp);
+            glUniform1i(glGetUniformLocation(sAffine, "uRight"), eye);
+            glUniform2f(glGetUniformLocation(sAffine, "uPosOffset"), eye == 0 ? -gp : gp, eye * 256);
 
             // note: transposed
             gpu_set_scissor(true, 256 * eye + (gy >= 0 ? gy : 0), gx >= 0 ? gx : 0, (gy + h < 256 ? gy + h : 256) + 256 * eye, gx + w);
-            glDrawArrays(GL_LINES, (vbufs[eye] - avbuf) * 2, h * 2);
+            if (instanced_available) {
+                glDrawArraysInstanced(GL_TRIANGLES, 0, 6, h);
+            } else {
+                glDrawArrays(GL_LINES, 0, h * 2);
+            }
         }
+    }
+
+    if (instanced_available) {
+        // reset to no divisor
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aOrigins"), 0);
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aOffsets"), 0);
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aEndPos"), 0);
+        glVertexAttribDivisor(glGetAttribLocation(sAffine, "aOffsetValue"), 0);
     }
 }
 
@@ -465,65 +587,68 @@ bool gpu_antiflicker_allowed(void) {
 }
 
 void gpu_flush(bool default_for_both, int displayed_fb, int vip_displayed_fb) {
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glViewport(0, 0, 384*2, 224*2);
-    glScissor(0, 0, 384*2, 224*2);
-    glUseProgram(sFinal);
+    GLuint target_fbo = gl_get_target_fbo();
+    if (target_fbo != -1) {
+        glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
+        glViewport(0, 0, 384*gl_get_output_scale(), 224*gl_get_output_scale());
+        glUseProgram(sFinal);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tVBOpt.RENDERMODE != RM_TOCPU ? screenTexHard[vip_displayed_fb] : transparentPixelTexture);
-    glUniform1i(glGetUniformLocation(sFinal, "sVip"), 0);
+        // In OpenGL 2.0, RetroArch doesn't reset the scissor mode.
+        gpu_set_scissor(false, 0, 0, 0, 0);
 
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, tDSPCACHE.DDSPDataState[displayed_fb] != GPU_CLEAR ? screenTexSoft[displayed_fb] : transparentPixelTexture);
-    glUniform1i(glGetUniformLocation(sFinal, "sSoft"), 1);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, tVBOpt.RENDERMODE != RM_TOCPU ? screenTexHard[vip_displayed_fb] : transparentPixelTexture);
+        glUniform1i(glGetUniformLocation(sFinal, "sVip"), 0);
 
-    glUniform1i(glGetUniformLocation(sFinal, "uVipOverSoft"), tVBOpt.VIP_OVER_SOFT);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, tDSPCACHE.DDSPDataState[displayed_fb] != GPU_CLEAR ? screenTexSoft[displayed_fb] : transparentPixelTexture);
+        glUniform1i(glGetUniformLocation(sFinal, "sSoft"), 1);
 
-    float colors[4][3] = {
-        {0, 0, 0},
-        {vb_state->tVIPREG.BRTA / 128.0, 0, 0},
-        {vb_state->tVIPREG.BRTB / 128.0, 0, 0},
-        {(vb_state->tVIPREG.BRTA + vb_state->tVIPREG.BRTB + vb_state->tVIPREG.BRTC) / 128.0, 0, 0},
-    };
-    if (tVBOpt.ANAGLYPH) {
-        for (int c = 0; c < 4; c++) {
-            colors[c][1] = colors[c][2] = colors[c][0];
+        // In OpenGL 2.0, RetroArch doesn't reset the active texture.
+        glActiveTexture(GL_TEXTURE0);
+
+        glUniform1i(glGetUniformLocation(sFinal, "uVipOverSoft"), tVBOpt.VIP_OVER_SOFT);
+
+        float colors[4][3] = {
+            {0, 0, 0},
+            {vb_state->tVIPREG.BRTA / 128.0, 0, 0},
+            {vb_state->tVIPREG.BRTB / 128.0, 0, 0},
+            {(vb_state->tVIPREG.BRTA + vb_state->tVIPREG.BRTB + vb_state->tVIPREG.BRTC) / 128.0, 0, 0},
+        };
+        if (tVBOpt.ANAGLYPH) {
+            for (int c = 0; c < 4; c++) {
+                colors[c][1] = colors[c][2] = colors[c][0];
+            }
+        }
+        glUniform3fv(glGetUniformLocation(sFinal, "uPalette"), 4, &colors[0][0]);
+
+        GLfloat vPositions[] = {
+            -1, -1,
+            1, -1,
+            -1, 1,
+            1, 1};
+        glVertexAttribPointer(glGetAttribLocation(sFinal, "aPosition"), 2, GL_FLOAT, GL_FALSE, 0, vPositions);
+        glEnableVertexAttribArray(glGetAttribLocation(sFinal, "aPosition"));
+        GLfloat vTexCoords[] = {
+            224.0/512.0, 0,
+            224.0/512.0, 384.0/512.0,
+            0, 0,
+            0, 384.0/512.0};
+        glVertexAttribPointer(glGetAttribLocation(sFinal, "aTexCoord"), 2, GL_FLOAT, GL_FALSE, 0, vTexCoords);
+        glEnableVertexAttribArray(glGetAttribLocation(sFinal, "aTexCoord"));
+
+        if (tVBOpt.ANAGLYPH) {
+            glColorMask(tVBOpt.ANAGLYPH_LEFT & 1, tVBOpt.ANAGLYPH_LEFT & 2, tVBOpt.ANAGLYPH_LEFT & 4, true);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            for (int i = 0; i < 4; i++) {
+                vTexCoords[i*2] += 0.5;
+            }
+            glColorMask(tVBOpt.ANAGLYPH_RIGHT & 1, tVBOpt.ANAGLYPH_RIGHT & 2, tVBOpt.ANAGLYPH_RIGHT & 4, true);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glColorMask(true, true, true, true);
+        } else {
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         }
     }
-    glUniform3fv(glGetUniformLocation(sFinal, "uPalette"), 4, &colors[0][0]);
-
-    GLfloat vPositions[] = {
-        -1, -1,
-        1, -1,
-        -1, 1,
-        1, 1};
-    glVertexAttribPointer(glGetAttribLocation(sFinal, "aPosition"), 2, GL_FLOAT, GL_FALSE, 0, vPositions);
-    glEnableVertexAttribArray(glGetAttribLocation(sFinal, "aPosition"));
-    GLfloat vTexCoords[] = {
-        224.0/512.0, 0,
-        224.0/512.0, 384.0/512.0,
-        0, 0,
-        0, 384.0/512.0};
-    glVertexAttribPointer(glGetAttribLocation(sFinal, "aTexCoord"), 2, GL_FLOAT, GL_FALSE, 0, vTexCoords);
-    glEnableVertexAttribArray(glGetAttribLocation(sFinal, "aTexCoord"));
-
-    if (tVBOpt.ANAGLYPH) {
-        glColorMask(tVBOpt.ANAGLYPH_LEFT & 1, tVBOpt.ANAGLYPH_LEFT & 2, tVBOpt.ANAGLYPH_LEFT & 4, true);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        for (int i = 0; i < 4; i++) {
-            vTexCoords[i*2] += 0.5;
-        }
-        glColorMask(tVBOpt.ANAGLYPH_RIGHT & 1, tVBOpt.ANAGLYPH_RIGHT & 2, tVBOpt.ANAGLYPH_RIGHT & 4, true);
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-        glColorMask(true, true, true, true);
-    } else {
-        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    }
-
-    SDL_GL_SwapWindow(window);
-}
-
-void gpu_quit(void) {
-    // TODO
+    gl_flush();
 }

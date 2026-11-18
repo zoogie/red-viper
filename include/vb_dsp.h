@@ -109,7 +109,7 @@ typedef struct {
     u16 w, h, param, over;
     u16 _pad[5];
 } WORLD;
-static_assert(sizeof(WORLD) == 32);
+static_assert(sizeof(WORLD) == 32, "World array should be 32 bytes");
 
 // DPSTTS / DPCTRL
 #define DPRST   0x0001
@@ -148,7 +148,7 @@ static_assert(sizeof(WORLD) == 32);
 
 int videoProcessingTime(void);
 
-void video_init(void);
+void video_init(bool also_gpu);
 void video_render(int displayed_fb, bool on_time);
 void video_download_vip(int drawn_fb);
 void video_flush(bool default_for_both);
